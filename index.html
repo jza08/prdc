@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Culinary Master AI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+      body { font-family: 'Inter', sans-serif; }
+      @keyframes float {
+        0% { transform: translateY(0px); }
+        50% { transform: translateY(-10px); }
+        100% { transform: translateY(0px); }
+      }
+      .animate-float { animation: float 3s ease-in-out infinite; }
+      
+      /* Custom Scrollbar */
+      ::-webkit-scrollbar { width: 8px; }
+      ::-webkit-scrollbar-track { background: #292524; }
+      ::-webkit-scrollbar-thumb { background: #fbbf24; borderRadius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #f59e0b; }
+
+      /* 3D Utilities */
+      .scene-3d {
+        perspective: 1200px;
+        transform-style: preserve-3d;
+      }
+      .preserve-3d {
+        transform-style: preserve-3d;
+      }
+      .backface-hidden {
+        backface-visibility: hidden;
+      }
+      
+      /* 3D Object Thickness Helper */
+      .thicken-y::before {
+        content: '';
+        position: absolute;
+        top: 100%;
+        left: 0;
+        width: 100%;
+        height: var(--thickness, 10px);
+        background-color: var(--thickness-color, #000);
+        transform-origin: top;
+        transform: rotateX(-90deg);
+      }
+      .thicken-x::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 100%;
+        width: var(--thickness, 10px);
+        height: 100%;
+        background-color: var(--thickness-color, #000);
+        transform-origin: left;
+        transform: rotateY(90deg);
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0"
+  }
+}
+</script>
+</head>
+  <body class="bg-stone-950 text-stone-100 overflow-hidden">
+    <div id="root"></div>
+  </body>
+</html>
