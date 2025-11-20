@@ -2,7 +2,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CookingMethod, PrepMethod, PlayerState, Recipe, Order, RecipeCategory, MarketItem, OrderStatus, DayState, Tool, Table } from './types';
 import { INITIAL_RECIPES, INITIAL_TOOLS, LEVEL_THRESHOLDS, MARKET_ITEMS } from './constants';
-import { generateAiRecipe } from './services/geminiService';
 import { ChefHat, Coins, Sparkles, UtensilsCrossed, ShoppingBag, Lock, Menu, Check, BookOpen, Star, AlertCircle, Flame, Waves, Zap, Clock, Play, Pause, RotateCcw, Trash2, PlusCircle, LayoutGrid, Scissors, Droplets, Egg, ChevronRight, ArrowUpCircle, Users } from 'lucide-react';
 
 const METHOD_NAMES: Record<CookingMethod, string> = {
@@ -68,25 +67,18 @@ export default function App() {
       customersServed: 0
   });
 
-  const [activeTab, setActiveTab] = useState<'kitchen' | 'menu' | 'shop' | 'lab'>('kitchen');
+  const [activeTab, setActiveTab] = useState<'kitchen' | 'menu' | 'shop'>('kitchen');
   const [shopTab, setShopTab] = useState<'tools' | 'market'>('market');
   const [notification, setNotification] = useState<{msg: string, type: 'success' | 'warn' | 'info'} | null>(null);
 
   // Interaction State
-  const [holdingOrder, setHoldingOrder] = useState<string | null>(null); // For holding PREP (wash)
   const [draggedDish, setDraggedDish] = useState<string | null>(null); // For SERVING (order ID)
-
-  // Lab State
-  const [labIngredients, setLabIngredients] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [labResult, setLabResult] = useState<Recipe | null>(null);
   
   // Menu Categories
   const [menuCategory, setMenuCategory] = useState<RecipeCategory | 'ALL'>('ALL');
 
   // --- REFS ---
   const gameLoopRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const holdTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // --- HELPERS ---
   const showNotification = (msg: string, type: 'success' | 'warn' | 'info' = 'info') => {
@@ -138,81 +130,42 @@ export default function App() {
       setDraggedDish(null);
   };
 
-  // Hold Action Logic (Washing)
-  useEffect(() => {
-      if (holdingOrder) {
-          holdTimerRef.current = setInterval(() => {
-             setActiveOrders(prev => prev.map(o => {
-                 if (o.id === holdingOrder) {
-                     const newProg = o.progress + 5; 
-                     if (newProg >= 100) {
-                         handlePrepComplete(o);
-                         setHoldingOrder(null); 
-                         return { ...o, progress: 100 };
-                     }
-                     return { ...o, progress: newProg };
-                 }
-                 return o;
-             }));
-          }, 100);
-      } else {
-          if (holdTimerRef.current) clearInterval(holdTimerRef.current);
-      }
-      return () => { if (holdTimerRef.current) clearInterval(holdTimerRef.current); };
-  }, [holdingOrder, recipes]);
-
-  const handlePrepComplete = (order: Order) => {
-      const recipe = recipes.find(r => r.id === order.recipeId);
-      if (!recipe) return;
-
-      const needsCooking = recipe.method !== CookingMethod.CUT;
-              
-      if (needsCooking) {
-          setActiveOrders(prev => {
-              const cookCount = prev.filter(o => o.status === OrderStatus.COOKING).length;
-              return prev.map(o => o.id === order.id ? { ...o, status: OrderStatus.COOKING, progress: 0, stationId: cookCount } : o);
-          });
-      } else {
-          setActiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: OrderStatus.READY } : o));
-      }
-  };
-
   // MAIN GAME LOOP
   useEffect(() => {
+      // Always clear old loop when dependencies change
+      if (gameLoopRef.current) {
+          clearInterval(gameLoopRef.current);
+          gameLoopRef.current = null;
+      }
+
       if (!dayState.isActive) return;
 
       gameLoopRef.current = setInterval(() => {
-          // 1. Time Progression (1 min per tick)
+          // 1. Time Progression (1 sec real time = 1 min game time)
           setDayState(prev => {
               const nextTime = prev.gameTime + 1;
               if (nextTime >= DAY_END_MINUTES) {
-                  return { ...prev, isActive: false, gameTime: DAY_END_MINUTES }; // Will trigger endDay via effect or next render logic
+                  // End of day reached; trigger closing flow once
+                  setTimeout(() => endDay(), 0);
+                  return { ...prev, isActive: false, gameTime: DAY_END_MINUTES };
               }
               return { ...prev, gameTime: nextTime };
           });
 
-          if (dayState.gameTime >= DAY_END_MINUTES) {
-              endDay();
-              return;
-          }
-
           // 2. Spawn Customers
           setTables(prevTables => {
-              // Chance to spawn if empty table exists
-              // Lower spawn rate: ~5% chance per tick (per real second) = ~3 customers per minute real time
-              // Slower than before because orders are complex
-              if (Math.random() > 0.05) return prevTables;
+              if (Math.random() > 0.05) return prevTables; // ~5% chance per second
 
               const emptyTable = prevTables.find(t => !t.isOccupied);
               if (!emptyTable) return prevTables;
 
-              // GENERATE COMBO ORDER
               const menuRecipes = recipes.filter(r => player.activeMenu.includes(r.id));
+              if (menuRecipes.length === 0) return prevTables;
+
               const apps = menuRecipes.filter(r => r.category === 'APPETIZER');
               const mains = menuRecipes.filter(r => r.category === 'MAIN' || r.category === 'SOUP');
               const others = menuRecipes.filter(r => r.category === 'DESSERT' || r.category === 'DRINK');
 
-              // Fallbacks if menu is unbalanced
               const r1 = apps.length > 0 ? apps[Math.floor(Math.random() * apps.length)] : menuRecipes[0];
               const r2 = mains.length > 0 ? mains[Math.floor(Math.random() * mains.length)] : menuRecipes[0];
               const r3 = others.length > 0 ? others[Math.floor(Math.random() * others.length)] : menuRecipes[0];
@@ -240,80 +193,24 @@ export default function App() {
               if (!t.isOccupied) return t;
               const newPatience = t.customerPatience - 0.05; // Slower decay for 3 dishes
               if (newPatience <= 0) {
-                  // Walk out!
                   showNotification(`桌号${t.id} 的客人等得不耐烦走了!`, 'warn');
                   return { ...t, isOccupied: false, orders: [], servedOrders: [] };
               }
               return { ...t, customerPatience: newPatience };
           }));
 
-          // 4. Kitchen Automation (Auto Cook/Prep)
-          setActiveOrders(prev => prev.map(order => {
-              if (order.status === OrderStatus.COOKING) {
-                  const recipe = recipes.find(r => r.id === order.recipeId);
-                  const tool = player.tools[recipe?.method || CookingMethod.FRY];
-                  const speed = 1 + (tool.multiplier * 0.2);
-                  
-                  let newProgress = order.progress + speed;
-                  if (newProgress > 150) return { ...order, status: OrderStatus.BURNT };
-                  return { ...order, progress: newProgress };
-              }
-              
-              if (order.status === OrderStatus.PREPPING) {
-                   const tool = player.tools[CookingMethod.CUT];
-                   if (tool.isAutomated) {
-                       let newProgress = order.progress + (tool.multiplier * 1.5);
-                       if (newProgress >= 100) {
-                           return { ...order, progress: Math.min(100, newProgress) };
-                       }
-                       return { ...order, progress: newProgress };
-                   }
-              }
-              
-              return order;
-          }));
-
-      }, 100); // 100ms tick is too fast for 1min increment, changed logic above to 1 sec = 1 min?
-      // Wait, logic above: setInterval 100ms. 
-      // If 100ms = 1 min game time -> 1 sec = 10 min game time. 
-      // 600 minutes (10 hours) would take 60 seconds. Too fast.
-      // User wants 10 minutes real time = 10 hours game time.
-      // 600 sec real = 600 min game.
-      // Ratio 1:1.
-      // So update tick needs to handle this.
-      // Let's adjust the interval to 1000ms (1s) and increment gameTime by 1.
-      // BUT we need smoother animations for cooking.
-      // SOLUTION: Keep 100ms interval. Increment gameTime by 0.1 per tick.
-      
-      return () => { if (gameLoopRef.current) clearInterval(gameLoopRef.current); };
-  }, [dayState.isActive, recipes, player.activeMenu, player.tools]);
-
-  // Fix Time Logic inside Loop - Implementing separate timer for smoothness
-  useEffect(() => {
-      if (!dayState.isActive) return;
-      const timer = setInterval(() => {
-          setDayState(prev => {
-              if (prev.gameTime >= DAY_END_MINUTES) return prev;
-              return { ...prev, gameTime: prev.gameTime + 1 };
-          });
       }, 1000);
-      return () => clearInterval(timer);
-  }, [dayState.isActive]);
+
+      return () => {
+          if (gameLoopRef.current) {
+              clearInterval(gameLoopRef.current);
+              gameLoopRef.current = null;
+          }
+      };
+  }, [dayState.isActive, recipes, player.activeMenu, player.tools]);
 
 
   // --- INTERACTIONS ---
-
-  const handleMouseDown = (order: Order) => {
-      if (order.status !== OrderStatus.PREPPING) return;
-      const recipe = recipes.find(r => r.id === order.recipeId);
-      if (recipe?.prepMethod === PrepMethod.WASH) {
-          setHoldingOrder(order.id);
-      }
-  };
-
-  const handleMouseUp = () => {
-      setHoldingOrder(null);
-  };
 
   // START COOKING (From Ticket)
   const startOrder = (tableId: number, recipeId: string) => {
@@ -326,17 +223,6 @@ export default function App() {
           return;
       }
       
-      const activePreps = activeOrders.filter(o => o.status === OrderStatus.PREPPING);
-      if (activePreps.length >= player.maxPrepSlots) {
-          showNotification("备菜区已满！", 'warn');
-          return;
-      }
-
-      // Determine Station ID
-      const usedStations = activePreps.map(o => o.stationId);
-      let targetStation = 0;
-      while (usedStations.includes(targetStation)) targetStation++;
-
       if (!player.unlockedPrepMethods.includes(recipe.prepMethod)) {
           showNotification(`未解锁工具: ${PREP_NAMES[recipe.prepMethod]}`, 'warn');
           return;
@@ -348,74 +234,30 @@ export default function App() {
           return {...prev, inventory: newInv};
       });
 
-      setActiveOrders(prev => [...prev, {
+      const newOrder: Order = {
           id: `ord_${Date.now()}_${Math.random()}`,
           tableId: tableId,
           recipeId: recipeId,
-          status: OrderStatus.PREPPING,
-          progress: 0,
-          stationId: targetStation
-      }]);
+          status: OrderStatus.READY,
+          progress: 100,
+          stationId: 0
+      };
+
+      setActiveOrders(prev => [...prev, newOrder]);
+      setDraggedDish(newOrder.id);
   };
 
   const handleOrderClick = (order: Order) => {
       const recipe = recipes.find(r => r.id === order.recipeId);
       if (!recipe) return;
 
-      // PREP -> COOK/READY
-      if (order.status === OrderStatus.PREPPING) {
-          if (recipe.prepMethod === PrepMethod.WASH) {
-              showNotification("按住以清洗！", 'info');
-              return;
-          }
-
-          const tool = player.tools[CookingMethod.CUT]; 
-          const increment = 20 * tool.multiplier; 
-          const newProgress = order.progress + increment;
-
-          if (newProgress >= 100) {
-              const needsCooking = recipe.method !== CookingMethod.CUT;
-              if (needsCooking) {
-                  const activeCooks = activeOrders.filter(o => o.status === OrderStatus.COOKING || o.status === OrderStatus.READY || o.status === OrderStatus.BURNT);
-                  if (activeCooks.length >= player.maxCookSlots) {
-                      showNotification("烹饪区已满！", 'warn');
-                      return;
-                  }
-                  
-                  const usedStations = activeCooks.map(o => o.stationId);
-                  let targetStation = 0;
-                  while (usedStations.includes(targetStation)) targetStation++;
-
-                  updateOrder(order.id, { status: OrderStatus.COOKING, progress: 0, stationId: targetStation });
-              } else {
-                  updateOrder(order.id, { status: OrderStatus.READY });
-              }
-          } else {
-              updateOrder(order.id, { progress: newProgress });
-          }
-      }
-
-      // COOK -> READY
-      else if (order.status === OrderStatus.COOKING) {
-          if (order.progress >= 80 && order.progress <= 120) {
-              updateOrder(order.id, { status: OrderStatus.READY });
-          } else if (order.progress < 80) {
-              showNotification("还没熟！", 'info');
-          } else {
-              showNotification("已经糊了！", 'warn');
-          }
-      }
-
-      // READY -> HOLD (Drag)
-      else if (order.status === OrderStatus.READY) {
+      if (order.status === OrderStatus.READY) {
           if (draggedDish === order.id) {
               setDraggedDish(null); // Cancel drag
           } else {
               setDraggedDish(order.id); // Pick up
           }
       }
-      
-      // BURNT -> TRASH
       else if (order.status === OrderStatus.BURNT) {
           setActiveOrders(prev => prev.filter(o => o.id !== order.id));
           showNotification("倒掉了糊菜...", 'info');
@@ -491,163 +333,111 @@ export default function App() {
 
   // --- 3D RENDERERS ---
 
-  const renderTable3D = (table: Table, index: number) => {
-      const isOccupied = table.isOccupied;
-      // 4 Tables: 2 rows of 2
-      const row = Math.floor(index / 2);
-      const col = index % 2;
-      const xPos = col === 0 ? '20%' : '80%';
-      const zPos = row === 0 ? '180px' : '280px'; // Closer to camera (bottom)
+  const renderDishToken = (order: Order) => {
+      const recipe = recipes.find(r => r.id === order.recipeId);
+      if (!recipe) return null;
+
+      const isDragged = draggedDish === order.id;
 
       return (
-          <div 
-              key={table.id}
-              onClick={() => handleTableClick(table)}
-              className={`absolute preserve-3d transition-all duration-500 ${isOccupied ? 'cursor-pointer' : ''}`}
-              style={{ 
-                  left: xPos,
-                  top: '0', 
-                  transform: `translate3d(-50%, 0, ${zPos})`,
-                  width: '120px',
-                  height: '120px'
-              }}
+          <button
+              key={order.id}
+              onClick={(e) => { e.stopPropagation(); handleOrderClick(order); }}
+              className={`px-3 py-2 rounded-2xl border-2 shadow-md transition-transform text-left min-w-[140px]
+                  ${isDragged ? 'bg-green-600 text-white scale-105 border-green-500' : 'bg-white text-stone-800 border-stone-200 hover:-translate-y-1'}`}
           >
-              {/* Table Surface */}
-              <div className={`absolute inset-0 rounded-full border-4 shadow-xl preserve-3d thicken-y ${isOccupied ? 'bg-amber-100 border-amber-300' : 'bg-stone-600 border-stone-500'}`} style={{'--thickness': '10px', '--thickness-color': '#444'} as any}>
-                  {/* Cloth texture */}
-                  {isOccupied && <div className="absolute inset-2 border-2 border-dashed border-amber-300/50 rounded-full"></div>}
-                  
-                  <div className="absolute -top-10 w-full text-center font-bold text-white bg-black/50 rounded px-2 backdrop-blur-sm transform rotate-x-0">
-                      {isOccupied ? `Table ${table.id}` : 'Empty'}
-                  </div>
+              <div className="flex items-center justify-between gap-2">
+                  <span className="text-lg">🍽️</span>
+                  <span className="text-[11px] font-mono text-stone-500">拖拽送餐</span>
+              </div>
+              <div className="font-bold text-sm mt-1">{recipe.name}</div>
+          </button>
+      );
+  };
 
-                  {/* Customers */}
-                  {isOccupied && (
-                      <div className="absolute -top-10 left-1/2 -translate-x-1/2 flex gap-1 transform rotate-x-[-25deg] origin-bottom">
-                          <Users className="text-stone-800 drop-shadow-md" size={40}/>
+  const renderTable = (table: Table) => {
+      const isOccupied = table.isOccupied;
+      const tableOrders = activeOrders.filter(o => o.tableId === table.id && o.status !== OrderStatus.BURNT);
+
+      const servedTracker: Record<string, number> = {};
+      table.servedOrders.forEach(rid => { servedTracker[rid] = (servedTracker[rid] || 0) + 1; });
+      const readyTracker: Record<string, number> = {};
+      tableOrders.forEach(o => { if (o.status === OrderStatus.READY) readyTracker[o.recipeId] = (readyTracker[o.recipeId] || 0) + 1; });
+
+      return (
+          <div key={table.id} className="relative w-full max-w-sm aspect-square flex items-center justify-center">
+              <div
+                  onClick={() => handleTableClick(table)}
+                  className={`relative w-[240px] h-[240px] rounded-full shadow-2xl border-8 transition-colors duration-300 flex items-center justify-center ${isOccupied ? 'bg-amber-100 border-amber-300 cursor-pointer' : 'bg-stone-700 border-stone-600 text-stone-200'}`}
+              >
+                  <div className="absolute inset-4 rounded-full border-2 border-dashed border-white/40"></div>
+                  {isOccupied ? (
+                      <div className="flex flex-col items-center gap-2">
+                          <Users className="text-stone-800" size={48} />
+                          <div className="text-xl font-bold text-stone-800">桌号 {table.id}</div>
+                          <div className="w-40 h-2 bg-white/40 rounded-full overflow-hidden">
+                              <div className={`h-full ${table.customerPatience < 30 ? 'bg-red-500' : 'bg-green-500'}`} style={{ width: `${table.customerPatience}%` }}></div>
+                          </div>
                       </div>
+                  ) : (
+                      <div className="text-center text-sm font-bold uppercase tracking-[0.3em]">空桌</div>
                   )}
-
-                  {/* Dishes on Table */}
-                  <div className="absolute inset-0 flex flex-wrap items-center justify-center p-2 gap-1">
-                      {table.servedOrders.map((rid, i) => (
-                          <div key={i} className="w-3 h-3 rounded-full bg-green-500 shadow-sm"></div>
-                      ))}
-                  </div>
               </div>
 
-              {/* Ticket / Orders Overlay (Floating above) */}
               {isOccupied && (
-                  <div className="absolute -top-48 left-1/2 -translate-x-1/2 w-32 bg-white p-2 shadow-2xl rounded border-t-4 border-red-500 transform rotate-x-[-10deg] z-50 hover:scale-110 transition-transform origin-bottom">
-                      <div className="w-full bg-stone-200 h-1 mb-1 rounded overflow-hidden">
-                          <div className={`h-full transition-all ${table.customerPatience < 30 ? 'bg-red-500' : 'bg-green-500'}`} style={{width: `${table.customerPatience}%`}}></div>
-                      </div>
-                      <div className="flex flex-col gap-1">
+                  <div className="absolute -top-28 left-1/2 -translate-x-1/2 w-full px-6 flex flex-col gap-2">
+                      <div className="flex flex-wrap justify-center gap-2">
                           {table.orders.map((rid, i) => {
-                              const isServed = i < table.servedOrders.length;
                               const recipe = recipes.find(r => r.id === rid);
-                              const isCooking = activeOrders.some(o => o.tableId === table.id && o.recipeId === rid);
-                              
+                              let state: 'pending' | 'ready' | 'served' = 'pending';
+
+                              if ((servedTracker[rid] || 0) > 0) {
+                                  servedTracker[rid] -= 1;
+                                  state = 'served';
+                              } else if ((readyTracker[rid] || 0) > 0) {
+                                  readyTracker[rid] -= 1;
+                                  state = 'ready';
+                              }
+
+                              const bg = state === 'served' ? 'bg-green-100 border-green-300 text-green-800' : state === 'ready' ? 'bg-blue-50 border-blue-200 text-blue-800' : 'bg-white border-stone-200 text-stone-800';
+
                               return (
-                                  <button 
-                                      key={i}
-                                      disabled={isServed || isCooking}
-                                      onClick={(e) => { e.stopPropagation(); startOrder(table.id, rid); }}
-                                      className={`
-                                          text-[10px] p-1 rounded border text-left truncate flex items-center justify-between
-                                          ${isServed ? 'bg-green-100 text-green-800 line-through opacity-50' : 
-                                            isCooking ? 'bg-blue-50 text-blue-800 border-blue-200' : 
-                                            'bg-white hover:bg-stone-100 text-stone-800 border-stone-200'}
-                                      `}
+                                  <button
+                                      key={`${rid}_${i}`}
+                                      disabled={state !== 'pending'}
+                                      onClick={(e) => { e.stopPropagation(); if (state === 'pending') startOrder(table.id, rid); }}
+                                      className={`px-3 py-2 rounded-xl shadow-md border text-sm font-bold min-w-[120px] transition ${bg} ${state === 'pending' ? 'hover:-translate-y-1' : 'opacity-70 cursor-not-allowed'}`}
                                   >
-                                      <span>{recipe?.name}</span>
-                                      {isCooking && !isServed && <Clock size={10} className="animate-spin"/>}
+                                      <div className="flex items-center justify-between gap-2">
+                                          <span className="truncate">{recipe?.name}</span>
+                                          {state === 'ready' && <Clock size={12} className="text-blue-500 animate-bounce" />}
+                                          {state === 'served' && <Check size={12} className="text-green-600" />}
+                                      </div>
+                                      <div className="text-[10px] uppercase tracking-wide font-mono">
+                                          {state === 'pending' ? '制作' : state === 'ready' ? '待上桌' : '已送达'}
+                                      </div>
                                   </button>
                               );
                           })}
                       </div>
                   </div>
               )}
+
+              {isOccupied && tableOrders.length > 0 && (
+                  <div className="absolute -bottom-16 left-1/2 -translate-x-1/2 flex flex-wrap justify-center gap-3">
+                      {tableOrders.map(renderDishToken)}
+                  </div>
+              )}
           </div>
       );
   };
-
-  const renderActiveItem3D = (order: Order, type: 'prep' | 'cook') => {
-      const recipe = recipes.find(r => r.id === order.recipeId);
-      if (!recipe) return null;
-      
-      const isReady = order.status === OrderStatus.READY;
-      const isBurnt = order.status === OrderStatus.BURNT;
-      const isPrepping = order.status === OrderStatus.PREPPING;
-      const isDragged = draggedDish === order.id;
-
-      // Determine visual
-      let visual = "🍳";
-      if (isBurnt) visual = "⚫";
-      else if (isReady) visual = "🍲";
-      else if (isPrepping) visual = "🥣";
-
-      return (
-          <div 
-            onMouseDown={() => handleMouseDown(order)}
-            onTouchStart={() => handleMouseDown(order)}
-            onClick={(e) => { e.stopPropagation(); handleOrderClick(order); }}
-            className={`
-                absolute transition-all duration-200 preserve-3d cursor-pointer
-                ${isReady ? 'animate-bounce' : ''}
-                ${isDragged ? 'scale-125 ring-4 ring-green-400 rounded-full bg-green-400/20 z-50' : ''}
-            `}
-            style={{ 
-                width: '80%', 
-                height: '80%',
-                transform: 'translateZ(20px) rotateX(-25deg)', // Stand up to face camera
-                transformOrigin: 'bottom center'
-            }}
-          >
-              <div className="w-full h-full flex flex-col items-center justify-end pb-2 drop-shadow-xl group-hover:scale-110 transition-transform">
-                   <div className="text-5xl mb-2 filter">{visual}</div>
-                   
-                   {isDragged ? (
-                       <div className="bg-green-600 text-white text-[10px] font-bold px-2 py-1 rounded animate-pulse">
-                           送到哪桌?
-                       </div>
-                   ) : (
-                       <div className={`text-[10px] font-bold px-2 py-0.5 rounded shadow-lg mb-1 whitespace-nowrap border ${isBurnt ? 'bg-black text-white border-stone-700' : 'bg-white text-stone-900 border-stone-200'}`}>
-                           {isBurnt ? "糊了!" : isReady ? "上菜!" : recipe.name}
-                       </div>
-                   )}
-
-                   {/* Progress Bar */}
-                   {!isReady && !isBurnt && (
-                       <div className="w-full h-2 bg-stone-800/50 backdrop-blur rounded-full border border-white/20 overflow-hidden">
-                           {type === 'prep' ? (
-                               <div className="h-full bg-blue-400 transition-all shadow-[0_0_10px_rgba(59,130,246,0.8)]" style={{width: `${order.progress}%`}}></div>
-                           ) : (
-                               <div className="relative h-full w-full">
-                                    <div className="absolute left-[53%] width-[26%] h-full bg-green-400/30 z-0"></div>
-                                    <div className={`h-full transition-all z-10 ${order.progress > 120 ? 'bg-red-500' : order.progress > 80 ? 'bg-green-500' : 'bg-orange-500'}`} style={{width: `${Math.min(100, (order.progress / 150) * 100)}%`}}></div>
-                               </div>
-                           )}
-                       </div>
-                   )}
-
-                    {isPrepping && recipe.prepMethod === PrepMethod.WASH && (
-                        <div className="absolute -top-4 right-0 bg-blue-500 text-white text-[10px] px-2 py-0.5 rounded-full animate-pulse shadow-lg border border-white">按住</div>
-                    )}
-                    {isPrepping && recipe.prepMethod !== PrepMethod.WASH && (
-                        <div className="absolute -top-4 right-0 bg-amber-500 text-white text-[10px] px-2 py-0.5 rounded-full animate-pulse shadow-lg border border-white">点击</div>
-                    )}
-              </div>
-          </div>
-      );
-  }
 
   const renderKitchen = () => {
       const levelThreshold = LEVEL_THRESHOLDS[player.level];
       const nextLevelXp = levelThreshold || 999999;
 
       return (
-          <div className="h-full w-full bg-[#1a1a1a] overflow-hidden relative">
+          <div className="h-full w-full bg-gradient-to-b from-stone-900 to-stone-800 overflow-hidden relative">
               {/* HUD */}
               <div className="absolute top-0 left-0 right-0 h-20 z-50 pointer-events-none flex justify-between items-start p-4">
                   <div className="flex items-center gap-4 pointer-events-auto">
@@ -664,7 +454,7 @@ export default function App() {
                           </div>
                       </div>
                   </div>
-                  
+
                   <div className="pointer-events-auto">
                     {dayState.isActive ? (
                         <div className="bg-stone-900/90 text-white px-6 py-3 rounded-xl border-2 border-stone-700 shadow-xl flex items-center gap-3 text-2xl font-mono font-bold">
@@ -672,7 +462,7 @@ export default function App() {
                             <span>{formatTime(dayState.gameTime)}</span>
                         </div>
                     ) : (
-                        <button 
+                        <button
                             onClick={startDay}
                             className="bg-green-600 hover:bg-green-500 text-white px-8 py-3 rounded-xl font-bold shadow-[0_4px_0_rgb(21,128,61)] active:shadow-none active:translate-y-1 transition-all flex items-center gap-2 text-lg border-2 border-green-400"
                         >
@@ -682,73 +472,22 @@ export default function App() {
                   </div>
               </div>
 
-              {/* 3D SCENE */}
-              <div className="absolute inset-0 flex items-center justify-center scene-3d">
-                   <div 
-                        className="relative w-full max-w-4xl h-[80vh] preserve-3d transition-transform duration-700 ease-out"
-                        style={{ transform: 'rotateX(25deg) scale(0.9) translateY(50px)' }}
-                   >
-                        {/* FLOOR */}
-                        <div 
-                            className="absolute inset-0 bg-stone-800 border-4 border-stone-700 rounded-xl opacity-100 shadow-2xl preserve-3d"
-                            style={{ 
-                                transform: 'translateZ(-40px)',
-                                backgroundImage: 'radial-gradient(#2a2a2a 15%, transparent 16%), radial-gradient(#2a2a2a 15%, transparent 16%)',
-                                backgroundSize: '60px 60px',
-                                backgroundPosition: '0 0, 30px 30px'
-                            }}
-                        ></div>
+              <div className="absolute inset-0 pt-24 pb-12 px-6 overflow-auto">
+                  <div className="max-w-6xl mx-auto">
+                      <div className="text-center mb-8 text-stone-200">
+                          <div className="text-xs uppercase tracking-[0.3em] text-amber-300">Front View</div>
+                          <h2 className="text-3xl font-black text-white mt-2">沙威玛传奇风格餐厅</h2>
+                          <p className="text-sm text-stone-400 mt-2">拉近视角，桌上浮动菜单，直接取餐上桌。</p>
+                      </div>
 
-                        {/* KITCHEN STATIONS (Back) */}
-                        <div className="absolute top-[10%] left-0 w-full flex justify-center preserve-3d" style={{ transform: 'translateZ(0px)' }}>
-                            <div className="bg-stone-700/50 px-8 py-2 rounded-full backdrop-blur-sm text-stone-300 text-xs font-bold uppercase tracking-widest mb-4 absolute -top-12 shadow-lg border border-stone-600">
-                                备菜 PREP
-                            </div>
-                            {Array.from({length: player.maxPrepSlots}).map((_, i) => {
-                                const order = activeOrders.find(o => o.status === OrderStatus.PREPPING && o.stationId === i);
-                                return (
-                                    <div key={`prep_${i}`} className="relative w-24 h-24 md:w-32 md:h-32 mx-2 group preserve-3d hover:translate-z-2 transition-transform duration-200">
-                                        <div className="absolute inset-0 bg-[#e6b87d] border-4 border-[#cfa063] rounded-lg shadow-inner flex items-center justify-center preserve-3d thicken-y" style={{'--thickness': '20px', '--thickness-color': '#8b5e3c'} as any}>
-                                            {!order && <UtensilsCrossed size={32} className="text-[#8b5e3c]/40" />}
-                                            {order && renderActiveItem3D(order, 'prep')}
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-
-                         <div className="absolute top-[40%] left-0 w-full flex justify-center preserve-3d" style={{ transform: 'translateZ(0px)' }}>
-                            <div className="bg-stone-700/50 px-8 py-2 rounded-full backdrop-blur-sm text-stone-300 text-xs font-bold uppercase tracking-widest mb-4 absolute -top-12 shadow-lg border border-stone-600">
-                                烹饪 COOK
-                            </div>
-                            {Array.from({length: player.maxCookSlots}).map((_, i) => {
-                                const order = activeOrders.find(o => (o.status === OrderStatus.COOKING || o.status === OrderStatus.READY || o.status === OrderStatus.BURNT) && o.stationId === i);
-                                return (
-                                    <div key={`cook_${i}`} className="relative w-24 h-24 md:w-32 md:h-32 mx-2 group preserve-3d hover:translate-z-2 transition-transform duration-200">
-                                        <div className="absolute inset-0 bg-stone-800 border-4 border-stone-700 rounded-lg shadow-inner flex items-center justify-center preserve-3d thicken-y" style={{'--thickness': '20px', '--thickness-color': '#1c1917'} as any}>
-                                            {!order && <Flame size={32} className="text-stone-600" />}
-                                            {order && renderActiveItem3D(order, 'cook')}
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-
-                        {/* DINING TABLES (Foreground) */}
-                        {tables.map((t, i) => renderTable3D(t, i))}
-
-                   </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-12 place-items-center">
+                          {tables.map((t) => renderTable(t))}
+                      </div>
+                  </div>
               </div>
           </div>
       );
   };
-
-  // ... (Keep renderMenu, renderShop, renderLab as is, just ensuring they are included in full App return or referenced)
-  // For brevity in this edit, I'm re-including the other render functions unchanged or slightly adapted if needed.
-  // Actually, I will omit the unchanged parts to save space unless they depend on new logic. 
-  // `renderMenu` needs to check `unlockedRecipes` which is updated.
-  // `renderShop` needs to check `MARKET_ITEMS`.
-  // I will include the full file content to ensure integrity.
 
   const renderMenu = () => {
       const visibleRecipes = recipes.filter(r => player.level >= r.unlockLevel || player.unlockedRecipes.includes(r.id));
@@ -1018,128 +757,19 @@ export default function App() {
       </div>
   );
 
-  const renderLab = () => {
-      return (
-          <div className="flex flex-col h-full bg-stone-900 text-white p-6 overflow-y-auto">
-              <div className="mb-10 text-center mt-10">
-                  <div className="inline-block p-4 rounded-full bg-purple-900/30 mb-4">
-                      <Sparkles className="text-purple-400 animate-pulse" size={48} />
-                  </div>
-                  <h2 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600 mb-2">AI 创意厨房</h2>
-                  <p className="text-stone-400">投入食材，让 Gemini 为你创造奇迹菜谱</p>
-              </div>
 
-              {!labResult ? (
-                  <div className="space-y-6 max-w-lg mx-auto w-full bg-stone-800/50 p-8 rounded-2xl border border-stone-700 backdrop-blur-sm">
-                      <div>
-                          <label className="block text-sm font-bold mb-3 text-stone-300 uppercase tracking-wider">研发食材清单</label>
-                          <input 
-                              value={labIngredients}
-                              onChange={(e) => setLabIngredients(e.target.value)}
-                              placeholder="例如: 牛肉, 辣椒, 巧克力..."
-                              className="w-full p-4 rounded-xl bg-stone-900 border border-stone-700 focus:border-purple-500 outline-none text-white placeholder-stone-600 transition-colors"
-                          />
-                      </div>
-                      
-                      <button 
-                          onClick={async () => {
-                              if (!labIngredients.trim()) {
-                                  showNotification("请输入一些食材！", 'warn');
-                                  return;
-                              }
-                              if (player.gold < 100) {
-                                  showNotification("研发费用不足 (100金币)", 'warn');
-                                  return;
-                              }
 
-                              setIsGenerating(true);
-                              setPlayer(p => ({...p, gold: p.gold - 100}));
-                              
-                              const ingredientsList = labIngredients.split(/[,，]/).map(s => s.trim()).filter(Boolean);
-                              const newRecipe = await generateAiRecipe(ingredientsList, player.level);
-                              
-                              setIsGenerating(false);
-                              if (newRecipe) {
-                                  setLabResult(newRecipe);
-                              } else {
-                                  showNotification("研发失败，请重试", 'warn');
-                                  setPlayer(p => ({...p, gold: p.gold + 100})); 
-                              }
-                          }}
-                          disabled={isGenerating}
-                          className={`w-full py-4 rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-3 transition-all ${isGenerating ? 'bg-stone-700 cursor-not-allowed' : 'bg-gradient-to-r from-purple-600 to-pink-600 hover:shadow-purple-500/25 hover:-translate-y-1'}`}
-                      >
-                          {isGenerating ? (
-                              <><RotateCcw className="animate-spin" /> 正在构思...</>
-                          ) : (
-                              <><Sparkles /> 开始研发 (100 G)</>
-                          )}
-                      </button>
-                  </div>
-              ) : (
-                  <div className="max-w-md mx-auto w-full bg-stone-800 p-8 rounded-2xl border border-stone-700 animate-fade-in shadow-2xl relative overflow-hidden">
-                      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 via-pink-500 to-purple-500"></div>
-                      
-                      <div className="text-center mb-8">
-                          <div className="text-xs text-purple-400 font-bold uppercase tracking-widest mb-2">New Recipe Discovered</div>
-                          <h3 className="text-3xl font-bold text-white mb-2">{labResult.name}</h3>
-                          <p className="text-stone-400 italic">"{labResult.description}"</p>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 mb-8 text-sm">
-                          <div className="bg-stone-900 p-4 rounded-lg text-center">
-                              <div className="text-stone-500 text-xs uppercase mb-1">Category</div>
-                              <div className="font-bold text-purple-300">{CATEGORY_NAMES[labResult.category]}</div>
-                          </div>
-                           <div className="bg-stone-900 p-4 rounded-lg text-center">
-                              <div className="text-stone-500 text-xs uppercase mb-1">Price</div>
-                              <div className="font-bold text-yellow-400">{labResult.basePrice} G</div>
-                          </div>
-                      </div>
-
-                      <div className="flex gap-4">
-                          <button 
-                              onClick={() => {
-                                  setLabResult(null);
-                                  setLabIngredients('');
-                              }}
-                              className="flex-1 py-3 rounded-xl bg-stone-700 hover:bg-stone-600 font-bold text-stone-300 transition-colors"
-                          >
-                              放弃
-                          </button>
-                          <button 
-                              onClick={() => {
-                                  setRecipes(prev => [...prev, labResult]);
-                                  setPlayer(p => ({...p, unlockedRecipes: [...p.unlockedRecipes, labResult.id]}));
-                                  showNotification(`学会了新菜谱: ${labResult.name}`, 'success');
-                                  setLabResult(null);
-                                  setLabIngredients('');
-                                  setActiveTab('menu');
-                              }}
-                              className="flex-1 py-3 rounded-xl bg-green-600 hover:bg-green-500 font-bold text-white shadow-lg shadow-green-900/20 transition-all hover:-translate-y-1"
-                          >
-                              收入菜单
-                          </button>
-                      </div>
-                  </div>
-              )}
-          </div>
-      );
-  };
 
   return (
-    <div 
+    <div
         className="h-screen flex flex-col bg-stone-900 text-stone-800 font-sans select-none overflow-hidden"
-        onMouseUp={handleMouseUp}
-        onTouchEnd={handleMouseUp}
     >
       {notification && <div className={`fixed top-20 left-1/2 -translate-x-1/2 px-6 py-3 rounded-xl shadow-xl z-[100] text-white font-bold animate-bounce ${notification.type === 'warn' ? 'bg-red-500' : 'bg-blue-600'}`}>{notification.msg}</div>}
-      
+
       <div className="flex-1 overflow-hidden relative">
         {activeTab === 'kitchen' && renderKitchen()}
         {activeTab === 'menu' && renderMenu()}
         {activeTab === 'shop' && renderShop()}
-        {activeTab === 'lab' && renderLab()}
       </div>
 
       {/* Bottom Nav */}
@@ -1148,11 +778,10 @@ export default function App() {
           {[
               {id: 'kitchen', icon: <UtensilsCrossed />, label: '厨房'},
               {id: 'menu', icon: <Menu />, label: '菜单'},
-              {id: 'shop', icon: <ShoppingBag />, label: '采购'},
-              {id: 'lab', icon: <Sparkles />, label: '研发'}
+              {id: 'shop', icon: <ShoppingBag />, label: '采购'}
           ].map(tab => (
-              <button 
-                key={tab.id} 
+              <button
+                key={tab.id}
                 onClick={() => !dayState.isActive && setActiveTab(tab.id as any)} 
                 className={`
                     flex flex-col items-center p-3 rounded-2xl transition-all duration-300
