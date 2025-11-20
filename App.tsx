@@ -1,15 +1,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { CookingMethod, PrepMethod, PlayerState, Recipe, Order, RecipeCategory, MarketItem, OrderStatus, DayState, Tool, Table } from './types';
-import { INITIAL_RECIPES, INITIAL_TOOLS, LEVEL_THRESHOLDS, MARKET_ITEMS } from './constants';
-import { ChefHat, Coins, Sparkles, UtensilsCrossed, ShoppingBag, Lock, Menu, Check, BookOpen, Star, AlertCircle, Flame, Waves, Zap, Clock, Play, Pause, RotateCcw, Trash2, PlusCircle, LayoutGrid, Scissors, Droplets, Egg, ChevronRight, ArrowUpCircle, Users } from 'lucide-react';
-
-const METHOD_NAMES: Record<CookingMethod, string> = {
-    [CookingMethod.CUT]: '冷盘',
-    [CookingMethod.FRY]: '煎炒',
-    [CookingMethod.STEW]: '炖煮',
-    [CookingMethod.BAKE]: '烘烤'
-};
+import { PrepMethod, PlayerState, Recipe, Order, RecipeCategory, OrderStatus, DayState, Table } from './types';
+import { INITIAL_RECIPES, LEVEL_THRESHOLDS, MARKET_ITEMS } from './constants';
+import { Coins, UtensilsCrossed, ShoppingBag, Lock, Menu, Check, BookOpen, Star, Clock, Play, Users } from 'lucide-react';
 
 const PREP_NAMES: Record<PrepMethod, string> = {
     [PrepMethod.CHOP]: '切配',
@@ -34,18 +27,13 @@ const DAY_END_MINUTES = 1200; // 20:00
 export default function App() {
   // --- CORE STATE ---
   const [player, setPlayer] = useState<PlayerState>({
-    gold: 500, 
+    gold: 500,
     xp: 0,
     level: 1,
-    skillPoints: 1, 
     // Unlocked at start: One of each category
     unlockedRecipes: ['tomato_salad', 'fried_egg', 'mushroom_soup', 'orange_juice', 'pudding'],
-    unlockedPrepMethods: [PrepMethod.CHOP, PrepMethod.MIX], // Start with Knife and Bowl
     activeMenu: ['tomato_salad', 'fried_egg', 'mushroom_soup', 'orange_juice', 'pudding'],
-    tools: INITIAL_TOOLS,
     inventory: { '番茄': 10, '罗勒': 10, '橄榄油': 10, '鸡蛋': 20, '盐': 10, '蘑菇': 10, '奶油': 10, '洋葱': 5, '水果': 10, '糖': 10, '冰块': 10, '牛奶': 10 },
-    maxPrepSlots: 2,
-    maxCookSlots: 2
   });
 
   const [recipes, setRecipes] = useState<Recipe[]>(INITIAL_RECIPES);
@@ -68,7 +56,6 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<'kitchen' | 'menu' | 'shop'>('kitchen');
-  const [shopTab, setShopTab] = useState<'tools' | 'market'>('market');
   const [notification, setNotification] = useState<{msg: string, type: 'success' | 'warn' | 'info'} | null>(null);
 
   // Interaction State
@@ -107,6 +94,14 @@ export default function App() {
       }
       return { hasAll: missing.length === 0, missing };
   };
+
+  // Level progression driven by累计经验
+  useEffect(() => {
+      const reachedLevel = Math.max(1, LEVEL_THRESHOLDS.filter(th => player.xp >= th).length);
+      if (reachedLevel !== player.level) {
+          setPlayer(prev => ({ ...prev, level: reachedLevel }));
+      }
+  }, [player.xp, player.level]);
 
   // --- GAME LOGIC ---
 
@@ -207,7 +202,7 @@ export default function App() {
               gameLoopRef.current = null;
           }
       };
-  }, [dayState.isActive, recipes, player.activeMenu, player.tools]);
+  }, [dayState.isActive, recipes, player.activeMenu]);
 
 
   // --- INTERACTIONS ---
@@ -223,11 +218,6 @@ export default function App() {
           return;
       }
       
-      if (!player.unlockedPrepMethods.includes(recipe.prepMethod)) {
-          showNotification(`未解锁工具: ${PREP_NAMES[recipe.prepMethod]}`, 'warn');
-          return;
-      }
-
       setPlayer(prev => {
           const newInv = {...prev.inventory};
           recipe.ingredients.forEach(ing => newInv[ing] = (newInv[ing] || 0) - 1);
@@ -513,19 +503,18 @@ export default function App() {
               <div className="flex-1 overflow-y-auto p-6 bg-stone-100">
                   <div className="grid gap-4 max-w-3xl mx-auto">
                       {filteredRecipes.map(recipe => {
-                          const isUnlocked = player.unlockedRecipes.includes(recipe.id);
+                          const isUnlocked = player.unlockedRecipes.includes(recipe.id) || player.level >= recipe.unlockLevel;
                           const isActive = player.activeMenu.includes(recipe.id);
-                          const prepToolUnlocked = player.unlockedPrepMethods.includes(recipe.prepMethod);
+                          const prepToolUnlocked = true;
 
-                          return (
-                              <div key={recipe.id} className={`group bg-white p-5 rounded-xl shadow-sm border-l-8 transition-all hover:shadow-md flex justify-between items-center relative overflow-hidden ${isActive ? 'border-green-500 ring-2 ring-green-100' : isUnlocked ? 'border-stone-300' : 'border-stone-200 bg-stone-50 opacity-80'}`}>
-                                  <div className="flex-1 z-10 pr-4">
-                                      <div className="flex items-center gap-3 mb-1">
-                                          <h3 className={`font-bold text-xl text-stone-800`}>{recipe.name}</h3>
-                                          <span className="text-[10px] px-2 py-0.5 bg-stone-200 rounded-full text-stone-600 font-bold uppercase tracking-wider">{CATEGORY_NAMES[recipe.category]}</span>
-                                          {recipe.isAiGenerated && <Sparkles size={14} className="text-purple-500" />}
-                                      </div>
-                                      <p className="text-sm text-stone-500 mb-3 italic">{recipe.description}</p>
+                              return (
+                                  <div key={recipe.id} className={`group bg-white p-5 rounded-xl shadow-sm border-l-8 transition-all hover:shadow-md flex justify-between items-center relative overflow-hidden ${isActive ? 'border-green-500 ring-2 ring-green-100' : isUnlocked ? 'border-stone-300' : 'border-stone-200 bg-stone-50 opacity-80'}`}>
+                                      <div className="flex-1 z-10 pr-4">
+                                          <div className="flex items-center gap-3 mb-1">
+                                              <h3 className={`font-bold text-xl text-stone-800`}>{recipe.name}</h3>
+                                              <span className="text-[10px] px-2 py-0.5 bg-stone-200 rounded-full text-stone-600 font-bold uppercase tracking-wider">{CATEGORY_NAMES[recipe.category]}</span>
+                                          </div>
+                                          <p className="text-sm text-stone-500 mb-3 italic">{recipe.description}</p>
                                       
                                       <div className="flex flex-wrap gap-2 mb-3">
                                           {recipe.ingredients.map((ing, i) => (
@@ -544,12 +533,12 @@ export default function App() {
                                       </div>
                                   </div>
 
-                                  <div className="flex flex-col items-center gap-2 min-w-[80px]">
+                                      <div className="flex flex-col items-center gap-2 min-w-[80px]">
                                     {isUnlocked ? (
                                         <button
                                             onClick={() => {
                                                 setPlayer(prev => {
-                                                    const newMenu = isActive 
+                                                    const newMenu = isActive
                                                         ? prev.activeMenu.filter(id => id !== recipe.id)
                                                         : [...prev.activeMenu, recipe.id];
                                                     return { ...prev, activeMenu: newMenu };
@@ -560,28 +549,13 @@ export default function App() {
                                             {isActive ? '下架' : '上架'}
                                         </button>
                                     ) : (
-                                        <button
-                                            onClick={() => {
-                                                if (player.skillPoints >= recipe.unlockCost) {
-                                                    setPlayer(prev => ({
-                                                        ...prev,
-                                                        skillPoints: prev.skillPoints - recipe.unlockCost,
-                                                        unlockedRecipes: [...prev.unlockedRecipes, recipe.id]
-                                                    }));
-                                                    showNotification(`解锁了 ${recipe.name}`, 'success');
-                                                } else {
-                                                    showNotification(`技能点不足 (需${recipe.unlockCost} SP)`, 'warn');
-                                                }
-                                            }}
-                                            className="w-full py-2 rounded-lg font-bold text-sm bg-stone-800 text-white shadow hover:bg-stone-700 flex flex-col items-center justify-center group-hover:animate-pulse"
-                                        >
-                                            <span>解锁</span>
-                                            <span className="text-[10px] text-yellow-400">{recipe.unlockCost} SP</span>
-                                        </button>
+                                        <div className="w-full py-3 rounded-lg font-bold text-xs text-center bg-stone-200 text-stone-500 border border-dashed border-stone-300">
+                                            需要 Lv.{recipe.unlockLevel}
+                                        </div>
                                     )}
+                                      </div>
                                   </div>
-                              </div>
-                          );
+                              );
                       })}
                   </div>
               </div>
@@ -592,167 +566,33 @@ export default function App() {
   const renderShop = () => (
       <div className="flex flex-col h-full bg-stone-100">
           <div className="p-6 bg-white shadow-md z-10 flex justify-between items-center">
-                <h2 className="text-3xl font-bold flex items-center gap-3 text-stone-800"><ShoppingBag className="text-green-600"/> 采购中心</h2>
-                <div className="flex bg-stone-200 p-1 rounded-lg">
-                    <button onClick={() => setShopTab('market')} className={`px-6 py-2 rounded-md font-bold text-sm transition-all ${shopTab === 'market' ? 'bg-white shadow text-green-700' : 'text-stone-500 hover:text-stone-700'}`}>菜市场</button>
-                    <button onClick={() => setShopTab('tools')} className={`px-6 py-2 rounded-md font-bold text-sm transition-all ${shopTab === 'tools' ? 'bg-white shadow text-blue-700' : 'text-stone-500 hover:text-stone-700'}`}>厨具与扩建</button>
+                <h2 className="text-3xl font-bold flex items-center gap-3 text-stone-800"><ShoppingBag className="text-green-600"/> 菜市场</h2>
+                <div className="flex items-center gap-3 text-stone-600 font-bold">
+                    <Coins size={18} className="text-yellow-500" /> {player.gold}
                 </div>
           </div>
           <div className="flex-1 overflow-auto p-6 custom-scrollbar">
-              {shopTab === 'market' ? (
-                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4">
-                      {MARKET_ITEMS.map(item => (
-                          <div key={item.name} className="bg-white p-4 rounded-xl shadow-sm hover:shadow-md transition-all border border-stone-100 flex flex-col items-center relative group cursor-pointer"
-                              onClick={() => {
-                                  if (player.gold >= item.cost * 5) {
-                                      setPlayer(p => ({...p, gold: p.gold - item.cost * 5, inventory: {...p.inventory, [item.name]: (p.inventory[item.name] || 0) + 5}}));
-                                      showNotification(`购买了5个${item.name}`, 'success');
-                                  } else showNotification("金币不足", 'warn');
-                              }}
-                          >
-                              <div className="text-4xl mb-3 transform group-hover:scale-110 transition-transform">{item.emoji}</div>
-                              <div className="font-bold text-stone-800">{item.name}</div>
-                              <div className="text-xs text-stone-500 mb-3 font-mono bg-stone-100 px-2 py-1 rounded mt-1">库存: {player.inventory[item.name] || 0}</div>
-                              <div className="w-full bg-green-50 text-green-700 py-1.5 rounded font-bold text-sm flex items-center justify-center gap-1 group-hover:bg-green-100">
-                                  <Coins size={12}/> {item.cost * 5}
-                              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                  {MARKET_ITEMS.map(item => (
+                      <button
+                          key={item.name}
+                          className="bg-white p-4 rounded-xl shadow-sm hover:shadow-md transition-all border border-stone-100 flex flex-col items-center gap-2 group"
+                          onClick={() => {
+                              if (player.gold >= item.cost * 5) {
+                                  setPlayer(p => ({...p, gold: p.gold - item.cost * 5, inventory: {...p.inventory, [item.name]: (p.inventory[item.name] || 0) + 5}}));
+                                  showNotification(`购买了5个${item.name}`, 'success');
+                              } else showNotification("金币不足", 'warn');
+                          }}
+                      >
+                          <div className="text-4xl transform group-hover:scale-110 transition-transform">{item.emoji}</div>
+                          <div className="font-bold text-stone-800">{item.name}</div>
+                          <div className="text-xs text-stone-500 font-mono bg-stone-100 px-2 py-1 rounded">库存: {player.inventory[item.name] || 0}</div>
+                          <div className="w-full bg-green-50 text-green-700 py-1.5 rounded font-bold text-sm flex items-center justify-center gap-1 group-hover:bg-green-100">
+                              <Coins size={12}/> {item.cost * 5}
                           </div>
-                      ))}
-                  </div>
-              ) : (
-                  <div className="max-w-4xl mx-auto space-y-8">
-                       <div className="bg-white p-6 rounded-2xl shadow-sm border border-blue-100">
-                           <h3 className="font-bold text-xl text-blue-900 mb-6 flex items-center gap-2 pb-2 border-b border-blue-100"><Zap size={20} className="text-blue-500"/> 研发新工具</h3>
-                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                               <div className={`p-6 rounded-xl border-2 flex items-center justify-between ${player.unlockedPrepMethods.includes(PrepMethod.WASH) ? 'bg-green-50 border-green-200' : 'bg-blue-50 border-blue-200'}`}>
-                                   <div className="flex items-center gap-4">
-                                        <div className="bg-white p-3 rounded-full shadow-sm text-blue-500"><Droplets size={24}/></div>
-                                        <div>
-                                            <div className="font-bold text-stone-800">水槽工作台</div>
-                                            <div className="text-xs text-stone-500">解锁清洗类食谱 (沙拉/水果)</div>
-                                        </div>
-                                   </div>
-                                   {player.unlockedPrepMethods.includes(PrepMethod.WASH) ? (
-                                       <div className="text-green-600 font-bold flex items-center gap-1"><Check size={16}/> 已拥有</div>
-                                   ) : (
-                                       <button onClick={() => {
-                                            if (player.skillPoints >= 1) {
-                                                setPlayer(p => ({...p, skillPoints: p.skillPoints - 1, unlockedPrepMethods: [...p.unlockedPrepMethods, PrepMethod.WASH]}));
-                                                showNotification("解锁了水槽！", 'success');
-                                            } else showNotification("技能点不足", 'warn');
-                                       }} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-sm shadow hover:bg-blue-500">解锁 (1 SP)</button>
-                                   )}
-                               </div>
-
-                               <div className={`p-6 rounded-xl border-2 flex items-center justify-between ${player.unlockedPrepMethods.includes(PrepMethod.MIX) ? 'bg-green-50 border-green-200' : 'bg-purple-50 border-purple-200'}`}>
-                                   <div className="flex items-center gap-4">
-                                        <div className="bg-white p-3 rounded-full shadow-sm text-purple-500"><RotateCcw size={24}/></div>
-                                        <div>
-                                            <div className="font-bold text-stone-800">专业搅拌机</div>
-                                            <div className="text-xs text-stone-500">解锁混合类食谱 (烘焙/蛋液)</div>
-                                        </div>
-                                   </div>
-                                   {player.unlockedPrepMethods.includes(PrepMethod.MIX) ? (
-                                       <div className="text-green-600 font-bold flex items-center gap-1"><Check size={16}/> 已拥有</div>
-                                   ) : (
-                                       <button onClick={() => {
-                                            if (player.skillPoints >= 1) {
-                                                setPlayer(p => ({...p, skillPoints: p.skillPoints - 1, unlockedPrepMethods: [...p.unlockedPrepMethods, PrepMethod.MIX]}));
-                                                showNotification("解锁了搅拌机！", 'success');
-                                            } else showNotification("技能点不足", 'warn');
-                                       }} className="bg-purple-600 text-white px-4 py-2 rounded-lg font-bold text-sm shadow hover:bg-purple-500">解锁 (1 SP)</button>
-                                   )}
-                               </div>
-                           </div>
-                       </div>
-
-                       <div className="bg-white p-6 rounded-2xl shadow-sm border border-amber-100">
-                            <h3 className="font-bold text-xl text-amber-900 mb-6 flex items-center gap-2 pb-2 border-b border-amber-100"><LayoutGrid size={20} className="text-amber-500"/> 厨房扩建</h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div className="bg-stone-50 p-5 rounded-xl border border-stone-200 flex items-center justify-between">
-                                    <div>
-                                        <div className="font-bold text-stone-800">扩展备菜区</div>
-                                        <div className="text-xs text-stone-500 mt-1">当前容量: {player.maxPrepSlots}</div>
-                                    </div>
-                                    <button 
-                                        onClick={() => {
-                                            if (player.skillPoints >= 2) {
-                                                setPlayer(p => ({...p, skillPoints: p.skillPoints - 2, maxPrepSlots: p.maxPrepSlots + 1}));
-                                                showNotification("扩建成功!", 'success');
-                                            } else showNotification("技能点不足 (需2点)", 'warn');
-                                        }}
-                                        className="bg-stone-800 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 hover:bg-stone-700"
-                                    >
-                                        <ArrowUpCircle size={16}/> 升级 (2 SP)
-                                    </button>
-                                </div>
-                                <div className="bg-stone-50 p-5 rounded-xl border border-stone-200 flex items-center justify-between">
-                                    <div>
-                                        <div className="font-bold text-stone-800">扩展烹饪区</div>
-                                        <div className="text-xs text-stone-500 mt-1">当前容量: {player.maxCookSlots}</div>
-                                    </div>
-                                    <button 
-                                        onClick={() => {
-                                            if (player.skillPoints >= 2) {
-                                                setPlayer(p => ({...p, skillPoints: p.skillPoints - 2, maxCookSlots: p.maxCookSlots + 1}));
-                                                showNotification("扩建成功!", 'success');
-                                            } else showNotification("技能点不足 (需2点)", 'warn');
-                                        }}
-                                        className="bg-stone-800 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 hover:bg-stone-700"
-                                    >
-                                        <ArrowUpCircle size={16}/> 升级 (2 SP)
-                                    </button>
-                                </div>
-                            </div>
-                       </div>
-
-                      <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-100">
-                          <h3 className="font-bold text-xl text-stone-800 mb-6 flex items-center gap-2 pb-2 border-b border-stone-100"><UtensilsCrossed size={20}/> 设备升级</h3>
-                          <div className="grid gap-4">
-                              {(Object.values(player.tools) as Tool[]).map(tool => (
-                                  <div key={tool.id} className="bg-stone-50 p-4 rounded-xl border border-stone-200 flex flex-col sm:flex-row justify-between items-center gap-4">
-                                      <div className="flex-1">
-                                          <div className="flex items-center gap-2">
-                                              <span className="font-bold text-lg">{tool.name}</span>
-                                              <span className="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full">Lv.{tool.level}</span>
-                                          </div>
-                                          <div className="text-sm text-stone-500 mt-1">{tool.description}</div>
-                                          <div className="text-xs text-stone-400 mt-1">当前效率: {(tool.multiplier * 100).toFixed(0)}%</div>
-                                      </div>
-                                      <div className="flex gap-3">
-                                          <button onClick={() => {
-                                              const cost = Math.floor(tool.cost * 1.5);
-                                              if (player.gold >= cost) {
-                                                  setPlayer(p => ({
-                                                      ...p, gold: p.gold - cost,
-                                                      tools: {...p.tools, [tool.type]: {...tool, level: tool.level + 1, multiplier: tool.multiplier + 0.2, cost}}
-                                                  }));
-                                                  showNotification("升级成功", 'success');
-                                              } else showNotification("金币不足", 'warn');
-                                          }} className="bg-amber-500 hover:bg-amber-400 text-white px-5 py-2 rounded-lg font-bold text-sm shadow">
-                                              升级 ({Math.floor(tool.cost * 1.5)} G)
-                                          </button>
-                                          
-                                          {!tool.isAutomated && tool.type === CookingMethod.CUT && (
-                                              <button onClick={() => {
-                                                  if (player.gold >= 500) {
-                                                      setPlayer(p => ({
-                                                          ...p, gold: p.gold - 500,
-                                                          tools: {...p.tools, [tool.type]: {...tool, isAutomated: true, name: "自动切菜机"}}
-                                                      }));
-                                                      showNotification("购买了自动切菜机！", 'success');
-                                                  } else showNotification("金币不足", 'warn');
-                                              }} className="bg-purple-600 hover:bg-purple-500 text-white px-5 py-2 rounded-lg font-bold text-sm shadow flex items-center gap-1">
-                                                  <Zap size={14}/> 自动化 (500 G)
-                                              </button>
-                                          )}
-                                      </div>
-                                  </div>
-                              ))}
-                          </div>
-                      </div>
-                  </div>
-              )}
+                      </button>
+                  ))}
+              </div>
           </div>
       </div>
   );

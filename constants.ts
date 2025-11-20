@@ -1,5 +1,5 @@
 
-import { CookingMethod, PrepMethod, Recipe, Tool, MarketItem } from './types';
+import { CookingMethod, PrepMethod, Recipe, MarketItem } from './types';
 
 export const MARKET_ITEMS: MarketItem[] = [
   { name: '番茄', cost: 5, emoji: '🍅' },
@@ -302,45 +302,5 @@ export const INITIAL_RECIPES: Recipe[] = [
     ingredients: ['咖啡豆', '牛奶', '糖']
   }
 ];
-
-export const INITIAL_TOOLS: Record<CookingMethod, Tool> = {
-  [CookingMethod.CUT]: {
-    id: 'knife_1',
-    name: '基础切菜板',
-    description: '手动点击来切菜。升级可解锁自动切菜助手。',
-    type: CookingMethod.CUT,
-    level: 1,
-    cost: 100,
-    multiplier: 1.0,
-    isAutomated: false
-  },
-  [CookingMethod.FRY]: {
-    id: 'pan_1',
-    name: '平底锅',
-    description: '注意火候！绿色时点击起锅。',
-    type: CookingMethod.FRY,
-    level: 1,
-    cost: 150,
-    multiplier: 1.0
-  },
-  [CookingMethod.STEW]: {
-    id: 'pot_1',
-    name: '汤锅',
-    description: '适合长时间炖煮。',
-    type: CookingMethod.STEW,
-    level: 1,
-    cost: 120,
-    multiplier: 1.0
-  },
-  [CookingMethod.BAKE]: {
-    id: 'oven_1',
-    name: '烤箱',
-    description: '烘焙必备。',
-    type: CookingMethod.BAKE,
-    level: 1,
-    cost: 300,
-    multiplier: 1.0
-  }
-};
 
 export const LEVEL_THRESHOLDS = [0, 150, 450, 900, 1500, 2200, 3000, 4000, 5500, 7500];
