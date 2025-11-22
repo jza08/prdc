@@ -34,36 +34,19 @@ export interface Recipe {
   xpReward: number;
   unlockLevel: number;
   unlockCost: number;
-  prepMethod: PrepMethod; 
+  prepMethod: PrepMethod;
   method: CookingMethod;
   difficulty: number;
   ingredients: string[];
-  isAiGenerated?: boolean;
-}
-
-export interface Tool {
-  id: string;
-  name: string;
-  description: string;
-  type: CookingMethod;
-  level: number;
-  cost: number;
-  multiplier: number;
-  isAutomated?: boolean; 
 }
 
 export interface PlayerState {
   gold: number;
   xp: number;
   level: number;
-  skillPoints: number;
   unlockedRecipes: string[];
-  unlockedPrepMethods: PrepMethod[]; 
   activeMenu: string[];
-  tools: Record<CookingMethod, Tool>;
   inventory: Record<string, number>;
-  maxPrepSlots: number;
-  maxCookSlots: number;
 }
 
 export enum OrderStatus {
